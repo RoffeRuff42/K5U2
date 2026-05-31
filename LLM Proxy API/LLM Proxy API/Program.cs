@@ -14,9 +14,22 @@ namespace LLM_Proxy_API
             builder.Services.AddControllers();
             // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
             builder.Services.AddOpenApi();
-            builder.Services.AddHttpClient<LlmController>();
+            builder.Services.AddHttpClient("FreeClient", (serviceProvider, client) =>
+            {
+                var config = serviceProvider.GetRequiredService<IConfiguration>();
+                var baseUrl = config["FreeApi:BaseUrl"];
+
+                if (!string.IsNullOrEmpty(baseUrl))
+                {
+                    client.BaseAddress = new Uri(baseUrl);
+                }
+                client.Timeout = TimeSpan.FromSeconds(15);
+            });
 
             var app = builder.Build();
+
+            // Enable the custom exception handling middleware to catch all unhandled errors
+            app.UseMiddleware<LLM_Proxy_API.Middlewares.ExceptionHandlingMiddleware>();
 
             // Configure the HTTP request pipeline.
             if (app.Environment.IsDevelopment())

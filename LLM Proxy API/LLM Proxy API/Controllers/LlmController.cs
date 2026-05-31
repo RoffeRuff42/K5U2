@@ -1,5 +1,5 @@
 ﻿using Microsoft.AspNetCore.Mvc;
-using System.Net.Http.Headers;
+using System.Text.Json.Serialization;
 
 namespace LLM_Proxy_API.Controllers
 {
@@ -10,58 +10,48 @@ namespace LLM_Proxy_API.Controllers
         private readonly HttpClient _httpClient;
         private readonly IConfiguration _config;
 
-        public LlmController(HttpClient httpClient, IConfiguration config)
+        public LlmController(IHttpClientFactory httpClientFactory, IConfiguration config)
         {
-            _httpClient = httpClient;
+            // Free API client for fetching jokes
+            _httpClient = httpClientFactory.CreateClient("FreeClient");
             _config = config;
         }
 
         [HttpGet("generate")]
         public async Task<IActionResult> Generate([FromQuery] string prompt)
         {
-            // 1. Retrieve the expected key from User Secrets (via IConfiguration)
+            // Validate the call from Service A
             var expectedKey = _config["InternalApiKey"];
-
-            // 2. Security check (Validate the call from Service A)
             if (!Request.Headers.TryGetValue("X-API-KEY", out var extractedKey) || extractedKey != expectedKey)
             {
                 return Unauthorized("Invalid internal API key.");
             }
 
-            // 3. Retrieve Hugging Face Token from secrets
-            var hfToken = _config["HuggingFace:ApiKey"]?.Replace("\"", "").Trim();
+            // Make a call to the external Joke API
+            var response = await _httpClient.GetAsync("random_joke");
+            response.EnsureSuccessStatusCode();
 
-            try
+            // Read the JSON response and map it to our JokeResponse class
+            var result = await response.Content.ReadFromJsonAsync<JokeResponse>();
+
+            if (result != null)
             {
-                // 4. Call the AI model via the Hugging Face router
-                var request = new HttpRequestMessage(HttpMethod.Post, "https://router.huggingface.co/openai-community/gpt2");
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", hfToken);
-                request.Content = JsonContent.Create(new { inputs = prompt });
-
-                var cts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
-                var response = await _httpClient.SendAsync(request, cts.Token);
-
-                if (response.IsSuccessStatusCode)
-                {
-                    var result = await response.Content.ReadFromJsonAsync<List<HuggingFaceResponse>>();
-                    if (result != null && result.Count > 0)
-                    {
-                        return Ok(new { Response = result[0].GeneratedText });
-                    }
-                }
+                // Combine the setup and punchline into a single joke string
+                var finalJoke = $"{result.Setup} {result.Punchline}";
+                return Ok(new { Response = finalJoke });
             }
-            catch { /* Fallback on error or timeout */ }
 
-            // 5. FALLBACK logic
-            string fallbackResponse = $"[AI-Generated] Regarding '{prompt}': This is a simulated response because the external AI service is currently migrating to new 2026-servers. The connection from Service A to Service B is working perfectly!";
-
-            return Ok(new { Response = fallbackResponse });
+            throw new HttpRequestException("The external service returned an empty response.");
         }
     }
 
-    public class HuggingFaceResponse
+    // Class to represent the structure of the joke response from the external API
+    public class JokeResponse
     {
-        [System.Text.Json.Serialization.JsonPropertyName("generated_text")]
-        public string GeneratedText { get; set; } = string.Empty;
+        [JsonPropertyName("setup")]
+        public string Setup { get; set; } = string.Empty;
+
+        [JsonPropertyName("punchline")]
+        public string Punchline { get; set; } = string.Empty;
     }
 }
