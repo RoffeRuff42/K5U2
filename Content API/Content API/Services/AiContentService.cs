@@ -2,6 +2,7 @@
 using Content_API.Models;
 using Content_API.Repositories;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Logging;
 using System;
 using System.Linq;
 using System.Net.Http.Json;
@@ -10,7 +11,7 @@ using System.Threading.Tasks;
 namespace Content_API.Services
 {
     /// <summary>
-    /// Service responsible for handling business logic for AI content, 
+    /// Service responsible for handling business logic for AI content,
     /// including caching and communication with the LLM Proxy (Service B).
     /// </summary>
     public class AiContentService : IAiContentService
@@ -18,26 +19,29 @@ namespace Content_API.Services
         private readonly IAiContentRepository _repository;
         private readonly IMemoryCache _cache;
         private readonly HttpClient _httpClient;
+        private readonly ILogger<AiContentService> _logger;
         private const string CacheKeyPrefix = "AiContents_list";
+        private const string GenerationFailedMessage = "Content could not be generated at this time.";
 
-        public AiContentService(IAiContentRepository repository, IMemoryCache cache, HttpClient httpClient)
+        public AiContentService(IAiContentRepository repository, IMemoryCache cache, HttpClient httpClient, ILogger<AiContentService> logger)
         {
             _repository = repository;
             _cache = cache;
             _httpClient = httpClient;
+            _logger = logger;
         }
 
         /// <summary>
         /// Retrieves paginated content with memory caching for improved performance.
         /// </summary>
-        public async Task<PagedResponse<AiContentReadDto>> GetAiContentsAsync(int page, int pageSize, string? category)
+        public async Task<PagedResponse<AiContentReadDto>> GetAiContentsAsync(int page, int pageSize, string? category, DateTime? startDate, string? sort)
         {
-            string cacheKey = $"{CacheKeyPrefix}_p{page}_s{pageSize}_c{category ?? "all"}";
+            string cacheKey = $"{CacheKeyPrefix}_p{page}_s{pageSize}_c{category ?? "all"}_d{startDate?.ToString("O") ?? "none"}_o{sort ?? "default"}";
 
             // Attempt to retrieve data from cache
             if (!_cache.TryGetValue(cacheKey, out PagedResponse<AiContentReadDto>? cachedResponse))
             {
-                var (items, totalCount) = await _repository.GetAllAsync(page, pageSize, category);
+                var (items, totalCount) = await _repository.GetAllAsync(page, pageSize, category, startDate, sort);
 
                 var dtos = items.Select(s => new AiContentReadDto(
                     s.Id, s.Title, s.OriginalPrompt, s.GeneratedText, s.Category, s.CreatedAt
@@ -78,8 +82,8 @@ namespace Content_API.Services
 
             try
             {
-                // Call Service B to generate content based on the prompt
-                var response = await _httpClient.GetAsync($"api/Llm/generate?prompt={Uri.EscapeDataString(createDto.OriginalPrompt)}");
+                // Call Service B to generate content based on the prompt, sent in the request body
+                var response = await _httpClient.PostAsJsonAsync("api/Llm/generate", new { prompt = createDto.OriginalPrompt });
 
                 if (response.IsSuccessStatusCode)
                 {
@@ -88,15 +92,17 @@ namespace Content_API.Services
                 }
                 else
                 {
-                    // Log specific error from Service B if the call fails
+                    // Log the details internally; never expose the raw response body to clients
                     var errorBody = await response.Content.ReadAsStringAsync();
-                    aiResponseText = $"Service B Error ({response.StatusCode}): {errorBody}";
+                    _logger.LogError("Service B returned a non-success status code {StatusCode}: {ErrorBody}", response.StatusCode, errorBody);
+                    aiResponseText = GenerationFailedMessage;
                 }
             }
             catch (Exception ex)
             {
-                // Fallback logic in case of network issues or timeouts
-                aiResponseText = $"Critical Connection Error: {ex.Message}";
+                // Log the exception internally; never expose exception details to clients
+                _logger.LogError(ex, "Failed to call Service B while generating AI content.");
+                aiResponseText = GenerationFailedMessage;
             }
 
             var newAiContent = new AiContent
@@ -157,8 +163,8 @@ namespace Content_API.Services
         /// </summary>
         private void ClearAiContentCache()
         {
-            // Simple removal of the first page cache to trigger a refresh
-            _cache.Remove($"{CacheKeyPrefix}_p1_s10_call");
+            // Simple removal of the default first-page cache entry to trigger a refresh
+            _cache.Remove($"{CacheKeyPrefix}_p1_s10_call_dnone_odefault");
         }
 
         private class LlmResponseDTO { public string Response { get; set; } = string.Empty; }

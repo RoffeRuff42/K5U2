@@ -1,12 +1,18 @@
 ﻿using Content_API.DTOs;
+using Content_API.Filters;
 using Content_API.Services;
 using Microsoft.AspNetCore.Mvc;
+using System;
 using System.Threading.Tasks;
 
 namespace Content_API.Controllers
 {
+    /// <summary>
+    /// Manages CRUD operations for saved AI-generated content.
+    /// </summary>
     [ApiController]
     [Route("api/[controller]")]
+    [LogExecutionTime]
     public class AiContentController : ControllerBase
     {
         private readonly IAiContentService _service;
@@ -17,18 +23,22 @@ namespace Content_API.Controllers
         }
 
         /// <summary>
-        /// Retrieves a paginated list of generated content.
+        /// Retrieves a paginated, filterable, and sortable list of generated content.
         /// </summary>
         /// <param name="page">Page number</param>
         /// <param name="pageSize">Number of items per page</param>
         /// <param name="category">Filter by category</param>
+        /// <param name="startDate">Only include items created on or after this date</param>
+        /// <param name="sort">Field to sort by, optionally prefixed with "-" for descending (e.g. "-createdAt", "title")</param>
         [HttpGet] // GET: api/AiContent
         public async Task<ActionResult<PagedResponse<AiContentReadDto>>> GetAiContents(
             [FromQuery] int page = 1,
             [FromQuery] int pageSize = 10,
-            [FromQuery] string? category = null)
+            [FromQuery] string? category = null,
+            [FromQuery] DateTime? startDate = null,
+            [FromQuery] string? sort = null)
         {
-            var response = await _service.GetAiContentsAsync(page, pageSize, category);
+            var response = await _service.GetAiContentsAsync(page, pageSize, category, startDate, sort);
             return Ok(response);
         }
 

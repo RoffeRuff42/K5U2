@@ -1,5 +1,6 @@
 
-using LLM_Proxy_API.Controllers;
+using LLM_Proxy_API.Services;
+using Scalar.AspNetCore;
 
 namespace LLM_Proxy_API
 {
@@ -12,18 +13,24 @@ namespace LLM_Proxy_API
             // Add services to the container.
 
             builder.Services.AddControllers();
-            // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
-            builder.Services.AddOpenApi();
-            builder.Services.AddHttpClient("FreeClient", (serviceProvider, client) =>
+
+            // OpenAPI / Documentation setup
+            builder.Services.AddEndpointsApiExplorer();
+            builder.Services.AddSwaggerGen(options =>
+            {
+                var xmlFile = $"{System.Reflection.Assembly.GetExecutingAssembly().GetName().Name}.xml";
+                var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
+                options.IncludeXmlComments(xmlPath);
+            });
+
+            // Typed HttpClient for calling the local Ollama instance (avoids socket exhaustion)
+            builder.Services.AddHttpClient<ILlmClient, OllamaClient>((serviceProvider, client) =>
             {
                 var config = serviceProvider.GetRequiredService<IConfiguration>();
-                var baseUrl = config["FreeApi:BaseUrl"];
+                var baseUrl = config["Llm:BaseUrl"] ?? "http://localhost:11434/";
 
-                if (!string.IsNullOrEmpty(baseUrl))
-                {
-                    client.BaseAddress = new Uri(baseUrl);
-                }
-                client.Timeout = TimeSpan.FromSeconds(15);
+                client.BaseAddress = new Uri(baseUrl);
+                client.Timeout = TimeSpan.FromMinutes(2);
             });
 
             var app = builder.Build();
@@ -34,13 +41,19 @@ namespace LLM_Proxy_API
             // Configure the HTTP request pipeline.
             if (app.Environment.IsDevelopment())
             {
-                app.MapOpenApi();
+                app.UseSwagger(options =>
+                {
+                    options.RouteTemplate = "openapi/{documentName}.json";
+                });
+
+                app.MapScalarApiReference();
             }
 
             app.UseHttpsRedirection();
 
-            app.UseAuthorization();
+            app.UseRouting();
 
+            app.UseAuthorization();
 
             app.MapControllers();
 

@@ -46,7 +46,7 @@ namespace LLM_Proxy_API.Middlewares
             //Handle specific errors from the external HTTP call
             if (exception is HttpRequestException httpEx)
             {
-                //If Hugging Face returns an HTTP error
+                //If the external LLM service returns an HTTP error
                 problemDetails.Status = (int?)httpEx.StatusCode ?? (int)HttpStatusCode.BadGateway;
                 problemDetails.Title = "External AI Service Error";
 
